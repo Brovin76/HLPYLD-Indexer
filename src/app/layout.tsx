@@ -7,6 +7,7 @@ import { Providers } from '@/components/Providers'
 const inter = Inter({ subsets: ['latin'], variable: '--font-inter' })
 
 export const metadata: Metadata = {
+  metadataBase: new URL('https://hypurryield.xyz'),
   title: 'HypurrYield - The Future of Tokenized Vaults',
   description: 'HypurrYield unlocks liquidity and DeFi integrations by tokenizing Hyperliquid Vaults. The first vault tokenization protocol on Hyperliquid.',
   openGraph: {
