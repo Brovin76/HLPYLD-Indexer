@@ -1,0 +1,5 @@
+export async function GET(request: Request) {
+  return new Response(JSON.stringify({ message: 'Coming soon' }), {
+    status: 403,
+  });
+} 

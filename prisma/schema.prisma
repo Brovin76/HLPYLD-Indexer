@@ -1,0 +1,49 @@
+generator client {
+  provider        = "prisma-client-js"
+  engineType      = "binary"
+  binaryTargets   = ["native", "debian-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model VaultMetrics {
+  id                  Int      @id @default(autoincrement())
+  vaultAddress        String
+  timestamp           DateTime @default(now())
+  totalAssets        BigInt
+  totalSupply        BigInt
+  performanceFee     Float
+  lastHarvestTimestamp DateTime?
+  apr                Float
+
+  @@index([vaultAddress])
+  @@index([timestamp])
+}
+
+model LPMovement {
+  id              Int      @id @default(autoincrement())
+  from            String
+  to              String
+  amount          BigInt
+  timestamp       DateTime
+  transactionHash String   @unique
+
+  @@index([from])
+  @@index([to])
+  @@index([timestamp])
+}
+
+model YieldMetric {
+  id                Int      @id @default(autoincrement())
+  vaultAddress      String
+  timestamp         DateTime
+  apr               Float
+  tvl               BigInt
+  harvestAmount     BigInt
+
+  @@index([vaultAddress])
+  @@index([timestamp])
+} 
