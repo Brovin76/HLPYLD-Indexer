@@ -11,6 +11,7 @@ import { motion } from 'framer-motion'
 import Particles from '@/components/ui/Particles'
 import { TokenizedVaultCard } from '@/components/TokenizedVaultCard'
 import { formatAddress } from '@/lib/utils'
+import { Toaster, toast } from 'react-hot-toast'
 
 // Vault types
 type VaultStatus = 'active' | 'paused' | 'deprecated' | 'test'
@@ -268,6 +269,36 @@ if (typeof document !== 'undefined') {
 //   // console.log('No positions found');
 // };
 
+// Custom toast component with better styling
+const TransactionToast = ({ hash, status }: { hash: string, status: 'pending' | 'confirmed' }) => (
+  <div className="bg-[#1A1D24] border border-hl-green rounded-lg p-3 min-w-[280px] max-w-[280px] shadow-lg shadow-hl-green/10">
+    <div className="flex items-center justify-between">
+      <div className="flex items-center gap-2">
+        {status === 'pending' ? (
+          <>
+            <div className="animate-spin rounded-full h-4 w-4 border-2 border-hl-green border-t-transparent" />
+            <span className="text-white">Confirming Transaction...</span>
+          </>
+        ) : (
+          <>
+            <div className="text-hl-green">✓</div>
+            <span className="text-white">Transaction Confirmed</span>
+          </>
+        )}
+      </div>
+      
+      <a 
+        href={`https://testnet.purrsec.com/tx/${hash}`}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="text-sm text-hl-green hover:text-hl-green-light flex items-center gap-1 transition-colors ml-3"
+      >
+        View ↗
+      </a>
+    </div>
+  </div>
+)
+
 export default function TokenizedVaultsPage() {
   const [selectedVault, setSelectedVault] = useState<typeof vaults[0] | null>(null)
   const [selectedAction, setSelectedAction] = useState<'deposit' | 'withdraw' | null>(null)
@@ -301,6 +332,15 @@ export default function TokenizedVaultsPage() {
         <div className="absolute inset-0 bg-[radial-gradient(circle_500px_at_50%_200px,#3CCF91,transparent_100%)] opacity-20" />
       </div>
       <Particles className="absolute inset-0 -z-10" quantity={100} />
+
+      {/* Add the Toaster component */}
+      <Toaster 
+        position="bottom-right"
+        toastOptions={{
+          duration: 5000,
+          className: '!bg-transparent !border-0 !shadow-none !p-0',
+        }}
+      />
 
       <div className="min-h-screen">
         <div className="container mx-auto px-4 py-8">
@@ -574,6 +614,14 @@ export default function TokenizedVaultsPage() {
                           onDeploy={() => {
                             console.log("Open deposit modal for", selectedVault.address)
                           }}
+                          onTransactionSubmitted={(hash, status) => {
+                            toast.custom(
+                              <TransactionToast hash={hash} status={status} />,
+                              {
+                                duration: status === 'pending' ? Infinity : 5000,
+                              }
+                            )
+                          }}
                         />
                       </div>
                     </div>
@@ -599,6 +647,14 @@ export default function TokenizedVaultsPage() {
                       <TokenizedVaultCard 
                         {...vault}
                         onDeploy={() => {}}
+                        onTransactionSubmitted={(hash, status) => {
+                          toast.custom(
+                            <TransactionToast hash={hash} status={status} />,
+                            {
+                              duration: status === 'pending' ? Infinity : 5000,
+                            }
+                          )
+                        }}
                       />
                     </div>
                   </div>

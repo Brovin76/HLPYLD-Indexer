@@ -3,11 +3,12 @@
 import { motion } from 'framer-motion'
 import { formatAddress } from '@/lib/utils'
 import { useState, useEffect } from 'react'
-import { useAccount, useBalance, useReadContract, useWriteContract, useWatchContractEvent } from 'wagmi'
+import { useAccount, useBalance, useReadContract, useWriteContract, useWatchContractEvent, useTransaction } from 'wagmi'
 import { TESTNET_CONTRACT_ADDRESSES, ERC20_ABI, VAULT_ABI } from '@/config/constants'
 import { formatUSDC } from '@/lib/utils'
 import { parseUnits } from 'viem'
 import { hyperEvmTestnet } from '@/lib/wallet'
+import { toast } from 'react-hot-toast'
 
 interface TokenizedVaultCardProps {
   name: string
@@ -20,6 +21,7 @@ interface TokenizedVaultCardProps {
   status: 'active' | 'paused' | 'deprecated' | 'test'
   initialAction?: 'deposit' | 'withdraw' | null
   onDeploy: () => void
+  onTransactionSubmitted?: (hash: string, status: 'pending' | 'confirmed') => void
 }
 
 export function TokenizedVaultCard(props: TokenizedVaultCardProps) {
@@ -53,42 +55,40 @@ export function TokenizedVaultCard(props: TokenizedVaultCardProps) {
     abi: ERC20_ABI,
     eventName: 'Approval',
     onLogs: async (logs) => {
-      console.log('Approval event received:', logs)
-      // Check if this approval event is for our transaction
-      const relevantLog = logs.find(
-        log => {
-          console.log('Comparing addresses:', {
-            logOwner: log.args.owner?.toLowerCase(),
-            userAddress: address?.toLowerCase(),
-            logSpender: log.args.spender?.toLowerCase(),
-            vaultAddress: TESTNET_CONTRACT_ADDRESSES.VAULT.toLowerCase()
-          })
-          return (
-            log.args.owner?.toLowerCase() === address?.toLowerCase() &&
-            log.args.spender?.toLowerCase() === TESTNET_CONTRACT_ADDRESSES.VAULT.toLowerCase()
-          )
-        }
+      const relevantLog = logs.find(log => 
+        log.args.owner?.toLowerCase() === address?.toLowerCase() &&
+        log.args.spender?.toLowerCase() === TESTNET_CONTRACT_ADDRESSES.VAULT.toLowerCase()
       )
       
       if (relevantLog) {
-        console.log('Relevant approval event found:', {
-          owner: relevantLog.args.owner,
-          spender: relevantLog.args.spender,
-          value: relevantLog.args.value.toString()
-        })
         await refetchAllowance()
         setIsApproving(false)
-      } else {
-        console.log('Event was not relevant to this transaction')
+        // Remove the confirmation toast from here
       }
     },
   })
 
   const { data:hash, writeContract } = useWriteContract()
+  
+  // Use useTransaction instead of useWaitForTransaction
+  const { isSuccess: isConfirmed } = useTransaction({
+    hash: hash as `0x${string}`,
+  })
 
   // Check if amount is approved
   const requiredAmount = usdcAmount ? parseUnits(usdcAmount, 8) : BigInt(0)
-  const isApproved = currentAllowance >= requiredAmount
+  const isApproved = currentAllowance !== undefined && currentAllowance >= requiredAmount
+
+  // Add logging to debug approval state
+  useEffect(() => {
+    console.log('Approval state:', {
+      currentAllowance: currentAllowance?.toString(),
+      requiredAmount: requiredAmount.toString(),
+      isApproved,
+      isApproving,
+      hasAmount: Boolean(parseFloat(usdcAmount))
+    })
+  }, [currentAllowance, requiredAmount, isApproved, isApproving, usdcAmount])
 
   const handleUsdcChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const value = e.target.value.replace(/[^\d.]/g, '')
@@ -109,13 +109,8 @@ export function TokenizedVaultCard(props: TokenizedVaultCardProps) {
 
     try {
       setIsApproving(true)
-      console.log('Initiating approval:', {
-        spender: TESTNET_CONTRACT_ADDRESSES.VAULT,
-        amount: parseUnits(usdcAmount, 8).toString(),
-        currentAllowance: currentAllowance?.toString()
-      })
       
-      writeContract({
+      await writeContract({
         abi: ERC20_ABI,
         address: TESTNET_CONTRACT_ADDRESSES.USDC as `0x${string}`,
         functionName: 'approve',
@@ -126,27 +121,6 @@ export function TokenizedVaultCard(props: TokenizedVaultCardProps) {
         chain: hyperEvmTestnet,
         account: address as `0x${string}`
       })
-      
-      console.log('Approval transaction submitted')
-      
-      // Start polling for allowance updates
-      const startTime = Date.now()
-      const maxDuration = 120000 // 2 minutes
-      const pollInterval = setInterval(async () => {
-        console.log('Polling for allowance update...')
-        const updated = await refetchAllowance()
-        console.log('Updated allowance:', updated.data?.toString())
-        
-        if (updated.data >= parseUnits(usdcAmount, 8)) {
-          console.log('Sufficient allowance found')
-          clearInterval(pollInterval)
-          setIsApproving(false)
-        } else if (Date.now() - startTime > maxDuration) {
-          console.log('Polling timeout reached')
-          clearInterval(pollInterval)
-          setIsApproving(false)
-        }
-      }, 2000)
 
     } catch (error) {
       console.error('Failed to approve:', error)
@@ -154,84 +128,57 @@ export function TokenizedVaultCard(props: TokenizedVaultCardProps) {
     }
   }
 
+  // Keep only one confirmation handler in the effect
+  useEffect(() => {
+    if (hash) {
+      // Show pending immediately when we have hash
+      props.onTransactionSubmitted?.(hash, 'pending')
+      
+      // When transaction is confirmed, show confirmed toast
+      if (isConfirmed) {
+        toast.dismiss() // Remove pending toast
+        props.onTransactionSubmitted?.(hash, 'confirmed')
+        setIsApproving(false)
+        setIsDepositing(false)  // Also handle deposit state
+      }
+    }
+  }, [hash, isConfirmed, props])
+
   const handleDeposit = async () => {
     if (!usdcAmount || !address || !isApproved) return
 
     try {
       setIsDepositing(true)
       const depositAmount = parseUnits(usdcAmount, 8)
-      const initialBalance = usdcBalance?.value || BigInt(0)
       
-      console.log('Initiating deposit request:', {
-        amount: depositAmount.toString(),
-        controller: address,
-        operator: address,
-        initialBalance: initialBalance.toString()
-      })
-
-      // Send the transaction
-      writeContract({
+      await writeContract({
         abi: VAULT_ABI,
         address: TESTNET_CONTRACT_ADDRESSES.VAULT as `0x${string}`,
         functionName: 'requestDeposit',
-        args: [
-          depositAmount,
-          address as `0x${string}`,
-          address as `0x${string}`
-        ],
+        args: [depositAmount, address as `0x${string}`, address as `0x${string}`],
         chain: hyperEvmTestnet,
         account: address as `0x${string}`
       })
 
-      // Start polling for balance updates
+      // Remove the confirmation logic from here since it's handled in the effect
+      const initialBalance = usdcBalance?.value || BigInt(0)
       const startTime = Date.now()
-      const maxDuration = 120000 // 2 minutes
-      const pollInterval = setInterval(async () => {
-        try {
-          const { data: newBalance } = await refetchBalance()
-          console.log('Polling balance:', {
-            newBalance: newBalance?.value.toString(),
-            initialBalance: initialBalance.toString(),
-            expectedDecrease: depositAmount.toString()
-          })
-          
-          if (newBalance && newBalance.value <= initialBalance - depositAmount) {
-            console.log('Balance decreased by expected amount')
-            clearInterval(pollInterval)
-            setIsDepositing(false)
-            setUsdcAmount('') // Reset form
-          } else if (Date.now() - startTime > maxDuration) {
-            console.log('Polling timeout reached')
-            clearInterval(pollInterval)
-            setIsDepositing(false)
-          }
-        } catch (error) {
-          console.error('Error polling balance:', error)
+      
+      // Just wait for balance update to reset form
+      while (Date.now() - startTime < 120000) {
+        const { data: newBalance } = await refetchBalance()
+        if (newBalance && newBalance.value <= initialBalance - depositAmount) {
+          setUsdcAmount('') // Reset form
+          break
         }
-      }, 2000)
+        await new Promise(resolve => setTimeout(resolve, 2000))
+      }
 
     } catch (error) {
       console.error('Failed to deposit:', error)
       setIsDepositing(false)
     }
   }
-
-  // Effect to check approval status when amount changes
-  useEffect(() => {
-    if (currentAllowance !== undefined) {
-      const requiredAmount = usdcAmount ? parseUnits(usdcAmount, 8) : BigInt(0)
-      const hasApproval = currentAllowance >= requiredAmount
-      console.log('Checking approval status:', {
-        currentAllowance: currentAllowance.toString(),
-        requiredAmount: requiredAmount.toString(),
-        hasApproval
-      })
-      if (hasApproval && isApproving) {
-        console.log('Setting isApproving to false due to sufficient allowance')
-        setIsApproving(false)
-      }
-    }
-  }, [currentAllowance, usdcAmount, isApproving])
 
   return (
     <motion.div 
@@ -340,19 +287,6 @@ export function TokenizedVaultCard(props: TokenizedVaultCardProps) {
           >
             {isDepositing ? 'Depositing...' : 'Confirm'}
           </button>
-          {hash && (
-            <div className="col-span-2 text-sm py-2">
-              Transaction Hash:{' '}
-              <a 
-                href={`https://testnet.purrsec.com/tx/${hash}`}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-hl-green hover:text-hl-green/80 transition-colors"
-              >
-                {hash}
-              </a>
-            </div>
-          )}
         </div>
       </div>
     </motion.div>
